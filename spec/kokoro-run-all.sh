@@ -8,6 +8,11 @@
 #    are modified, in which case all tests will be run.
 #  * Nightly runs will run all tests.
 
+if [[ $KOKORO_RUBY_VERSION == "newest" ]]; then
+    rbenv global "$NEWEST_RUBY_VERSION"
+else
+    rbenv global "$OLDEST_RUBY_VERSION"
+fi
 
 # Print out Ruby version
 ruby --version
@@ -96,22 +101,6 @@ if [[ $CHANGED_DIRS =~ "appengine" ]]; then
   CHANGED_DIRS="${CHANGED_DIRS/appengine/} $AE_CHANGED_DIRS"
 fi
 
-# The run directory has many subdirectories. Only test the modified ones.
-if [[ $CHANGED_DIRS =~ "run" ]]; then
-  AE_CHANGED_DIRS=$(git --no-pager diff --name-only HEAD $(git merge-base HEAD master) | grep "run/" | cut -d/ -f1,2 | sort | uniq || true)
-  CHANGED_DIRS="${CHANGED_DIRS/run/} $AE_CHANGED_DIRS"
-  # Install gcloud for Cloud Run samples if not installing later
-  if [[ ! -n ${RUN_ALL_TESTS:-} ]]; then
-    export PATH="$PATH:/tmp/google-cloud-sdk/bin"
-    ./.kokoro/configure_gcloud.sh
-  fi
-fi
-
-# Most tests in the appengine directory are E2E or always run E2E tests for Cloud Run
-if [[ ($CHANGED_DIRS =~ "appengine" || $CHANGED_DIRS =~ "run") && -n ${RUN_ALL_TESTS:-} ]]; then
-  E2E="true"
-fi
-
 # RUN_ALL_TESTS after this point is used to indicate if we should run tests in every directory,
 # rather than only tests in modified directories.
 RUN_ALL_TESTS="0"
@@ -125,8 +114,19 @@ if [[ $CHANGED_DIRS =~ "spec" || $CHANGED_DIRS =~ ".kokoro" ]]; then
   RUN_ALL_TESTS="1"
 fi
 
+# Most tests in the appengine/run directory are E2E.
+if [[ "${CHANGED_DIRS}" =~ "run" || "${CHANGED_DIRS}" =~ "appengine" || -n ${RUN_ALL_TESTS:-} ]]; then
+  E2E="true"
+fi
+
 # Start memcached (for appengine/memcache).
 service memcached start
+
+# Download Cloud SQL Proxy.
+wget https://dl.google.com/cloudsql/cloud_sql_proxy.linux.amd64
+mv cloud_sql_proxy.linux.amd64 /cloud_sql_proxy
+chmod +x /cloud_sql_proxy
+mkdir /cloudsql && chmod 0777 /cloudsql
 
 if [[ $E2E = "true" ]]; then
   echo "This test run will run end-to-end tests."
@@ -136,17 +136,24 @@ if [[ $E2E = "true" ]]; then
 
   ./.kokoro/configure_gcloud.sh
 
-  # Download Cloud SQL Proxy.
-  wget https://dl.google.com/cloudsql/cloud_sql_proxy.linux.amd64
-  mv cloud_sql_proxy.linux.amd64 /cloud_sql_proxy
-  chmod +x /cloud_sql_proxy
-  mkdir /cloudsql && chmod 0777 /cloudsql
-
-  # Start Cloud SQL Proxy.
+  # Start Cloud SQL Proxy for AppEngine tests.
   /cloud_sql_proxy -dir=/cloudsql -credential_file=$GOOGLE_APPLICATION_CREDENTIALS &
   export CLOUD_SQL_PROXY_PROCESS_ID=$!
   trap "kill $CLOUD_SQL_PROXY_PROCESS_ID || true" EXIT
 fi
+
+# Start Cloud SQL Proxies for Cloud SQL Tests.
+/cloud_sql_proxy -instances=${POSTGRES_INSTANCE_CONNECTION_NAME}=tcp:5432,${POSTGRES_INSTANCE_CONNECTION_NAME} -dir=/cloudsql -credential_file=$GOOGLE_APPLICATION_CREDENTIALS &
+export POSTGRES_CLOUD_SQL_PROXY_PROCESS_ID=$!
+trap "kill $POSTGRES_CLOUD_SQL_PROXY_PROCESS_ID || true" EXIT
+
+/cloud_sql_proxy -instances=${MYSQL_INSTANCE_CONNECTION_NAME}=tcp:3306,${MYSQL_INSTANCE_CONNECTION_NAME} -dir=/cloudsql -credential_file=$GOOGLE_APPLICATION_CREDENTIALS &
+export MYSQL_CLOUD_SQL_PROXY_PROCESS_ID=$!
+trap "kill $MYSQL_CLOUD_SQL_PROXY_PROCESS_ID || true" EXIT
+
+/cloud_sql_proxy -instances=${SQLSERVER_INSTANCE_CONNECTION_NAME}=tcp:1433 -credential_file=$GOOGLE_APPLICATION_CREDENTIALS &
+export SQLSERVER_CLOUD_SQL_PROXY_PROCESS_ID=$!
+trap "kill $SQLSERVER_CLOUD_SQL_PROXY_PROCESS_ID || true" EXIT
 
 # Capture failures
 EXIT_STATUS=0 # everything passed
@@ -168,7 +175,12 @@ if [[ $RUN_ALL_TESTS = "1" ]]; then
 
     start_time="$(date -u +%s)"
 
-    (bundle update && bundle exec rspec --format documentation --format RspecJunitFormatter --out sponge_log.xml | tee sponge_log.log) || set_failed_status
+    if [[ -f "${REPO_DIRECTORY}/${PRODUCT}/bin/run_tests" ]]; then
+      (bundle update && bin/run_tests) || set_failed_status
+    else
+      (bundle update && bundle exec rspec --format documentation --format RspecJunitFormatter --out sponge_log.xml | tee sponge_log.log) || set_failed_status
+    fi
+
 
     if [[ $E2E = "true" ]]; then
       # Clean up deployed version
@@ -208,8 +220,8 @@ else
 fi
 
 if [[ $KOKORO_BUILD_ARTIFACTS_SUBDIR = *"system-tests"* ]]; then
-  chmod +x $KOKORO_GFILE_DIR/linux_amd64/buildcop
-  $KOKORO_GFILE_DIR/linux_amd64/buildcop
+  chmod +x $KOKORO_GFILE_DIR/linux_amd64/flakybot
+  $KOKORO_GFILE_DIR/linux_amd64/flakybot
 fi
 
 exit $EXIT_STATUS

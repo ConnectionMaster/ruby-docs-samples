@@ -26,7 +26,7 @@ def create_instance project_id:, instance_id:
                                 name:   instance_id,
                                 config: "regional-us-central1",
                                 nodes:  2,
-                                labels: { "cloud_spanner_samples": true }
+                                labels: { cloud_spanner_samples: true }
 
   puts "Waiting for create instance operation to complete"
 
@@ -38,6 +38,37 @@ def create_instance project_id:, instance_id:
     puts "Created instance #{instance_id}"
   end
   # [END spanner_create_instance]
+end
+
+def create_instance_with_processing_units project_id:, instance_id:
+  # [START spanner_create_instance_with_processing_units]
+  # project_id  = "Your Google Cloud project ID"
+  # instance_id = "Your Spanner instance ID"
+
+  require "google/cloud/spanner"
+
+  spanner = Google::Cloud::Spanner.new project: project_id
+
+  job = spanner.create_instance instance_id,
+                                name: "Low cost instance",
+                                config: "regional-us-central1",
+                                processing_units: 500,
+                                labels: { cloud_spanner_samples: true }
+
+  puts "Waiting for creating instance operation to complete"
+
+  job.wait_until_done!
+
+  if job.error?
+    puts job.error
+  else
+    puts "Created instance #{instance_id}"
+  end
+
+  instance = spanner.instance instance_id
+  puts "Instance #{instance_id} has #{instance.processing_units} processing units."
+
+  # [END spanner_create_instance_with_processing_units]
 end
 
 def create_database project_id:, instance_id:, database_id:
@@ -73,6 +104,88 @@ def create_database project_id:, instance_id:, database_id:
 
   puts "Created database #{database_id} on instance #{instance_id}"
   # [END spanner_create_database]
+end
+
+def create_database_with_version_retention_period project_id:, instance_id:, database_id:
+  # [START spanner_create_database_with_version_retention_period]
+  # project_id  = "Your Google Cloud project ID"
+  # instance_id = "Your Spanner instance ID"
+  # database_id = "Your Spanner database ID"
+
+  require "google/cloud/spanner"
+
+  spanner  = Google::Cloud::Spanner.new project: project_id
+  instance = spanner.instance instance_id
+  version_retention_period = "7d"
+
+  job = instance.create_database database_id, statements: [
+    "CREATE TABLE Singers (
+      SingerId     INT64 NOT NULL,
+      FirstName    STRING(1024),
+      LastName     STRING(1024),
+      SingerInfo   BYTES(MAX)
+    ) PRIMARY KEY (SingerId)",
+
+    "CREATE TABLE Albums (
+      SingerId     INT64 NOT NULL,
+      AlbumId      INT64 NOT NULL,
+      AlbumTitle   STRING(MAX)
+    ) PRIMARY KEY (SingerId, AlbumId),
+    INTERLEAVE IN PARENT Singers ON DELETE CASCADE",
+
+    "ALTER DATABASE `#{database_id}`
+      SET OPTIONS ( version_retention_period = '#{version_retention_period}' )"
+  ]
+
+  puts "Waiting for create database operation to complete"
+
+  job.wait_until_done!
+  database = job.database
+
+  puts "Created database #{database_id} on instance #{instance_id}"
+  puts "\tVersion retention period: #{database.version_retention_period}"
+  puts "\tEarliest version time: #{database.earliest_version_time}"
+  # [END spanner_create_database_with_version_retention_period]
+end
+
+def create_database_with_encryption_key project_id:, instance_id:, database_id:, kms_key_name:
+  # [START spanner_create_database_with_encryption_key]
+  # project_id  = "Your Google Cloud project ID"
+  # instance_id = "Your Spanner instance ID"
+  # database_id = "Your Spanner database ID"
+  # kms_key_name = "Database eencryption KMS key"
+
+  require "google/cloud/spanner"
+
+  spanner  = Google::Cloud::Spanner.new project: project_id
+  instance = spanner.instance instance_id
+
+  job = instance.create_database database_id,
+                                 statements:        [
+                                   "CREATE TABLE Singers (
+                                     SingerId     INT64 NOT NULL,
+                                     FirstName    STRING(1024),
+                                     LastName     STRING(1024),
+                                     SingerInfo   BYTES(MAX)
+                                   ) PRIMARY KEY (SingerId)",
+
+                                   "CREATE TABLE Albums (
+                                     SingerId     INT64 NOT NULL,
+                                     AlbumId      INT64 NOT NULL,
+                                     AlbumTitle   STRING(MAX)
+                                   ) PRIMARY KEY (SingerId, AlbumId),
+                                   INTERLEAVE IN PARENT Singers ON DELETE CASCADE"
+                                 ],
+                                 encryption_config: { kms_key_name: kms_key_name }
+
+  puts "Waiting for create database operation to complete"
+
+  job.wait_until_done!
+  database = job.database
+
+  puts "Database #{database.database_id} created with encryption key #{database.encryption_config.kms_key_name}"
+
+  # [END spanner_create_database_with_encryption_key]
 end
 
 def create_table_with_timestamp_column project_id:, instance_id:, database_id:
@@ -499,8 +612,8 @@ def query_nested_struct_field project_id:, instance_id:, database_id:
   }
 
   client.execute(
-    "SELECT SingerId, @song_info.SongName " +
-    "FROM Singers WHERE STRUCT<FirstName STRING, LastName STRING>(FirstName, LastName) " +
+    "SELECT SingerId, @song_info.SongName " \
+    "FROM Singers WHERE STRUCT<FirstName STRING, LastName STRING>(FirstName, LastName) " \
     "IN UNNEST(@song_info.ArtistNames)",
     params: { song_info: song_info_struct }
   ).rows.each do |row|
@@ -1368,7 +1481,7 @@ def query_with_query_options project_id:, instance_id:, database_id:
   client  = spanner.client instance_id, database_id
 
   sql_query = "SELECT VenueId, VenueName, LastUpdateTime FROM Venues"
-  query_options = { optimizer_version: "1" }
+  query_options = { optimizer_version: "1", optimizer_statistics_package: "latest" }
 
   client.execute(sql_query, query_options: query_options).rows.each do |row|
     puts "#{row[:VenueId]} #{row[:VenueName]} #{row[:LastUpdateTime]}"
@@ -1384,7 +1497,7 @@ def create_client_with_query_options project_id:, instance_id:, database_id:
 
   require "google/cloud/spanner"
 
-  query_options = { optimizer_version: "1" }
+  query_options = { optimizer_version: "1", optimizer_statistics_package: "auto_20191128_14_47_22UTC" }
 
   spanner = Google::Cloud::Spanner.new project: project_id
   client  = spanner.client instance_id, database_id, query_options: query_options
@@ -1421,7 +1534,7 @@ def write_read_bool_array project_id:, instance_id:, database_id:
   client = spanner.client instance_id, database_id
 
   box_id = SecureRandom.uuid
-  client.insert "Boxes", BoxId: box_id, ErrorChecks: [true, false, true]
+  client.insert "Boxes", [{ BoxId: box_id, ErrorChecks: [true, false, true] }]
   results = client.read "Boxes", [:BoxId, :ErrorChecks], keys: box_id
 
   results.rows.each do |row|
@@ -1454,7 +1567,7 @@ def write_read_empty_int64_array project_id:, instance_id:, database_id:
   client = spanner.client instance_id, database_id
 
   box_id = SecureRandom.uuid
-  client.insert "Boxes", BoxId: box_id, Heights: []
+  client.insert "Boxes", [{ BoxId: box_id, Heights: [] }]
   results = client.read "Boxes", [:BoxId, :Heights], keys: box_id
 
   results.rows.each do |row|
@@ -1487,7 +1600,7 @@ def write_read_null_int64_array project_id:, instance_id:, database_id:
   client = spanner.client instance_id, database_id
 
   box_id = SecureRandom.uuid
-  client.insert "Boxes", BoxId: box_id, Heights: [nil, nil, nil]
+  client.insert "Boxes", [{ BoxId: box_id, Heights: [nil, nil, nil] }]
   results = client.read "Boxes", [:BoxId, :Heights], keys: box_id
 
   results.rows.each do |row|
@@ -1520,7 +1633,7 @@ def write_read_int64_array project_id:, instance_id:, database_id:
   client = spanner.client instance_id, database_id
 
   box_id = SecureRandom.uuid
-  client.insert "Boxes", BoxId: box_id, Heights: [10, 11, 12]
+  client.insert "Boxes", [{ BoxId: box_id, Heights: [10, 11, 12] }]
   results = client.read "Boxes", [:BoxId, :Heights], keys: box_id
 
   results.rows.each do |row|
@@ -1553,7 +1666,7 @@ def write_read_empty_float64_array project_id:, instance_id:, database_id:
   client = spanner.client instance_id, database_id
 
   box_id = SecureRandom.uuid
-  client.insert "Boxes", BoxId: box_id, Weights: []
+  client.insert "Boxes", [{ BoxId: box_id, Weights: [] }]
   results = client.read "Boxes", [:BoxId, :Weights], keys: box_id
 
   results.rows.each do |row|
@@ -1586,7 +1699,7 @@ def write_read_null_float64_array project_id:, instance_id:, database_id:
   client = spanner.client instance_id, database_id
 
   box_id = SecureRandom.uuid
-  client.insert "Boxes", BoxId: box_id, Weights: [nil, nil, nil]
+  client.insert "Boxes", [{ BoxId: box_id, Weights: [nil, nil, nil] }]
   results = client.read "Boxes", [:BoxId, :Weights], keys: box_id
 
   results.rows.each do |row|
@@ -1619,7 +1732,7 @@ def write_read_float64_array project_id:, instance_id:, database_id:
   client = spanner.client instance_id, database_id
 
   box_id = SecureRandom.uuid
-  client.insert "Boxes", BoxId: box_id, Weights: [10.001, 11.1212, 104.4123101]
+  client.insert "Boxes", [{ BoxId: box_id, Weights: [10.001, 11.1212, 104.4123101] }]
   results = client.read "Boxes", [:BoxId, :Weights], keys: box_id
 
   results.rows.each do |row|
@@ -1628,29 +1741,63 @@ def write_read_float64_array project_id:, instance_id:, database_id:
   # [END spanner_write_read_float64_array]
 end
 
-def create_backup project_id:, instance_id:, database_id:, backup_id:
+def create_backup project_id:, instance_id:, database_id:, backup_id:, version_time:
   # [START spanner_create_backup]
   # project_id  = "Your Google Cloud project ID"
   # instance_id = "Your Spanner instance ID"
   # database_id = "Your Spanner database ID"
   # backup_id = "Your Spanner backup ID"
+  # version_time = Time.now - 60 * 60 * 24 # 1 day ago
 
   require "google/cloud/spanner"
 
-  spanner  = Google::Cloud::Spanner.new project: project_id
+  spanner = Google::Cloud::Spanner.new project: project_id
+  client = spanner.client instance_id, database_id
   instance = spanner.instance instance_id
   database = instance.database database_id
   expire_time = Time.now + 14 * 24 * 3600 # 14 days from now
 
-  job = database.create_backup backup_id, expire_time
+  job = database.create_backup backup_id, expire_time, version_time: version_time
 
   puts "Backup operation in progress"
 
   job.wait_until_done!
 
   backup = instance.backup backup_id
-  puts "Backup #{backup.backup_id} of size #{backup.size_in_bytes} bytes was created at #{backup.create_time}"
+  puts "Backup #{backup.backup_id} of size #{backup.size_in_bytes} bytes was created at #{backup.create_time} for version of database at #{backup.version_time}"
   # [END spanner_create_backup]
+end
+
+def create_backup_with_encryption_key project_id:, instance_id:, database_id:, backup_id:, kms_key_name:
+  # [START spanner_create_backup_with_encryption_key]
+  # project_id  = "Your Google Cloud project ID"
+  # instance_id = "Your Spanner instance ID"
+  # database_id = "Your Spanner database ID"
+  # backup_id = "Your Spanner backup ID"
+  # kms_key_name = "Your backup encryption database KMS key"
+
+  require "google/cloud/spanner"
+
+  spanner = Google::Cloud::Spanner.new project: project_id
+  client = spanner.client instance_id, database_id
+  instance = spanner.instance instance_id
+  database = instance.database database_id
+  expire_time = Time.now + 14 * 24 * 3600 # 14 days from now
+  encryption_config = {
+    encryption_type: :CUSTOMER_MANAGED_ENCRYPTION,
+    kms_key_name:    kms_key_name
+  }
+
+  job = database.create_backup backup_id, expire_time, encryption_config: encryption_config
+
+  puts "Backup operation in progress"
+
+  job.wait_until_done!
+
+  backup = instance.backup backup_id
+  puts "Backup #{backup.backup_id} of size #{backup.size_in_bytes} bytes was created at #{backup.create_time} using encryption key #{kms_key_name}"
+
+  # [END spanner_create_backup_with_encryption_key]
 end
 
 def restore_backup project_id:, instance_id:, database_id:, backup_id:
@@ -1673,8 +1820,39 @@ def restore_backup project_id:, instance_id:, database_id:, backup_id:
   job.wait_until_done!
 
   restore_info = job.database.restore_info
-  puts "Database #{restore_info.backup_info.source_database_id} was restored to #{database_id} from backup #{restore_info.backup_info.backup_id}"
+  puts "Database #{restore_info.backup_info.source_database_id} was restored to #{database_id} from backup #{restore_info.backup_info.backup_id} with version time #{restore_info.backup_info.version_time}"
   # [END spanner_restore_backup]
+end
+
+def restore_database_with_encryption_key project_id:, instance_id:, database_id:, backup_id:, kms_key_name:
+  # [START spanner_restore_backup_with_encryption_key]
+  # project_id  = "Your Google Cloud project ID"
+  # instance_id = "Your Spanner instance ID"
+  # database_id = "Your Spanner database ID of where to restore"
+  # backup_id = "Your Spanner backup ID"
+  # kms_key_name = "Your backup encryption database KMS key"
+
+  require "google/cloud/spanner"
+
+  spanner  = Google::Cloud::Spanner.new project: project_id
+  instance = spanner.instance instance_id
+
+  backup = instance.backup backup_id
+
+  encryption_config = {
+    encryption_type: :CUSTOMER_MANAGED_ENCRYPTION,
+    kms_key_name:    kms_key_name
+  }
+  job = backup.restore database_id, encryption_config: encryption_config
+
+  puts "Waiting for restore backup operation to complete"
+
+  job.wait_until_done!
+  database = job.database
+  restore_info = database.restore_info
+  puts "Database #{restore_info.backup_info.source_database_id} was restored to #{database.database_id} from backup #{restore_info.backup_info.backup_id} using encryption key #{database.encryption_config.kms_key_name}"
+
+  # [END spanner_restore_backup_with_encryption_key]
 end
 
 def create_backup_cancel project_id:, instance_id:, database_id:, backup_id:
@@ -1788,7 +1966,7 @@ def list_backups project_id:, instance_id:, backup_id:, database_id:
   end
 
   puts "All backups with a size greater than 500 bytes:"
-  instance.backups(filter: "size_bytes > 500").all.each do |backup|
+  instance.backups(filter: "size_bytes >= 500").all.each do |backup|
     puts backup.backup_id
   end
 
@@ -1873,83 +2051,109 @@ def set_custom_timeout_and_retry project_id:, instance_id:, database_id:
   # [END spanner_set_custom_timeout_and_retry]
 end
 
+def commit_stats project_id:, instance_id:, database_id:
+  # [START spanner_get_commit_stats]
+  # project_id  = "Your Google Cloud project ID"
+  # instance_id = "Your Spanner instance ID"
+  # database_id = "Your Spanner database ID"
+
+  require "google/cloud/spanner"
+
+  spanner = Google::Cloud::Spanner.new project: project_id
+  client  = spanner.client instance_id, database_id
+
+  records = [
+    { SingerId: 1, AlbumId: 1, MarketingBudget: 200_000 },
+    { SingerId: 2, AlbumId: 2, MarketingBudget: 400_000 }
+  ]
+  commit_options = { return_commit_stats: true }
+  resp = client.upsert "Albums", records, commit_options: commit_options
+  puts "Updated data with #{resp.stats.mutation_count} mutations."
+
+  # [END spanner_get_commit_stats]
+end
+
 def usage
   puts <<~USAGE
 
     Usage: bundle exec ruby spanner_samples.rb [command] [arguments]
 
     Commands:
-      create_instance                    <instance_id> Create Instance
-      create_database                    <instance_id> <database_id> Create Database
-      create_table_with_timestamp_column <instance_id> <database_id> Create table Performances with commit timestamp column
-      insert_data                        <instance_id> <database_id> Insert Data
-      insert_data_with_timestamp_column  <instance_id> <database_id> Inserts data into Performances table containing the commit timestamp column
-      query_data                         <instance_id> <database_id> Query Data
-      read_data                          <instance_id> <database_id> Read Data
-      delete_data                        <instance_id> <database_id> Delete Data
-      read_stale_data                    <instance_id> <database_id> Read Stale Data
-      create_index                       <instance_id> <database_id> Create Index
-      create_storing_index               <instance_id> <database_id> Create Storing Index
-      add_column                         <instance_id> <database_id> Add Column
-      add_timestamp_column               <instance_id> <database_id> Alters existing Albums table, adding a commit timestamp column
-      add_numeric_column                 <instance_id> <database_id> Alters existing Venues table, adding a numeric column
-      update_data                        <instance_id> <database_id> Update Data
-      update_data_with_timestamp_column  <instance_id> <database_id> Updates two records in the altered table where the commit timestamp column was added
-      update_data_with_numeric_column    <instance_id> <database_id> Updates three records in the altered table where the numeric column was added
-      query_data_with_new_column         <instance_id> <database_id> Query Data with New Column
-      query_data_with_timestamp_column   <instance_id> <database_id> Queries data from altered table where the commit timestamp column was added
-      write_struct_data                  <instance_id> <database_id> Inserts sample data that can be used for STRUCT queries
-      query_with_struct                  <instance_id> <database_id> Queries data using a STRUCT paramater
-      query_with_array_of_struct         <instance_id> <database_id> Queries data using an array of STRUCT values as parameter
-      query_struct_field                 <instance_id> <database_id> Queries data by accessing field from a STRUCT parameter
-      query_nested_struct_field          <instance_id> <database_id> Queries data by accessing field from nested STRUCT parameters
-      query_data_with_index              <instance_id> <database_id> <start_title> <end_title> Query Data with Index
-      read_write_transaction             <instance_id> <database_id> Read-Write Transaction
-      read_data_with_index               <instance_id> <database_id> Read Data with Index
-      read_data_with_storing_index       <instance_id> <database_id> Read Data with Storing Index
-      read_only_transaction              <instance_id> <database_id> Read-Only Transaction
-      spanner_batch_client               <instance_id> <database_id> Use Spanner batch query with a thread pool
-      insert_using_dml                   <instance_id> <database_id> Insert Data using a DML statement.
-      update_using_dml                   <instance_id> <database_id> Update Data using a DML statement.
-      delete_using_dml                   <instance_id> <database_id> Delete Data using a DML statement.
-      update_using_dml_with_timestamp    <instance_id> <database_id> Update the timestamp value of specifc records using a DML statement.
-      write_and_read_using_dml           <instance_id> <database_id> Insert data using a DML statement and then read the inserted data.
-      update_using_dml_with_struct       <instance_id> <database_id> Update data using a DML statement combined with a Spanner struct.
-      write_using_dml                    <instance_id> <database_id> Insert multiple records using a DML statement.
-      query_with_parameter               <instance_id> <database_id> Query record inserted using DML with a query parameter.
-      query_with_numeric_parameter       <instance_id> <database_id> Query record inserted using DML with a numeric query parameter.
-      write_with_transaction_using_dml   <instance_id> <database_id> Update data using a DML statement within a read-write transaction.
-      update_using_partitioned_dml       <instance_id> <database_id> Update multiple records using a partitioned DML statement.
-      delete_using_partitioned_dml       <instance_id> <database_id> Delete multiple records using a partitioned DML statement.
-      update_using_batch_dml             <instance_id> <database_id> Updates sample data in the database using Batch DML.
-      create_table_with_datatypes        <instance_id> <database_id> Create table Venues with supported datatype columns.
-      write_datatypes_data               <instance_id> <database_id> Inserts sample data that can be used for datatype queries.
-      query_with_array                   <instance_id> <database_id> Queries data using an ARRAY parameter.
-      query_with_bool                    <instance_id> <database_id> Queries data using a BOOL parameter.
-      query_with_bytes                   <instance_id> <database_id> Queries data using a BYTES parameter.
-      query_with_date                    <instance_id> <database_id> Queries data using a DATE parameter.
-      query_with_float                   <instance_id> <database_id> Queries data using a FLOAT64 parameter.
-      query_with_int                     <instance_id> <database_id> Queries data using a INT64 parameter.
-      query_with_string                  <instance_id> <database_id> Queries data using a STRING parameter.
-      query_with_timestamp               <instance_id> <database_id> Queries data using a TIMESTAMP parameter.
-      query_with_query_options           <instance_id> <database_id> Queries data with query options.
-      create_client_with_query_options   <instance_id> <database_id> Create a client with query options.
-      write_read_bool_array              <instance_id> <database_id> Writes and read BOOL array.
-      write_read_empty_int64_array       <instance_id> <database_id> Writes empty INT64 array and read.
-      write_read_null_int64_array        <instance_id> <database_id> Writes nil to INT64 array and read.
-      write_read_int64_array             <instance_id> <database_id> Writes INT64 array and read.
-      write_read_empty_float64_array     <instance_id> <database_id> Writes empty FLOAT64 array and read.
-      write_read_null_float64_array      <instance_id> <database_id> Writes nil to FLOAT64 array and read.
-      write_read_float64_array           <instance_id> <database_id> Writes FLOAT64 array and read.
-      create_backup                      <instance_id> <database_id> <backup_id> Create a backup.
-      restore_backup                     <instance_id> <database_id> <backup_id> Restore a database.
-      create_backup_cancel               <instance_id> <database_id> <backup_id> Cancel a backup.
-      list_backup_operations             <instance_id> List backup operations.
-      list_database_operations           <instance_id> List database operations.
-      list_backups                       <instance_id> <backup_id> <database_id> List and filter backups.
-      delete_backup                      <instance_id> <backup_id> Delete a backup.
-      update_backup                      <instance_id> <backup_id> Update the backup.
-      set_custom_timeout_and_retry       <instance_id> <database_id> Set custom timeout and retry settings.
+      create_instance                      <instance_id> Create Instance
+      create_database                      <instance_id> <database_id> Create Database
+      create_database_with_encryption_key  <instance_id> <database_id> Create Database with encryption
+      create_table_with_timestamp_column   <instance_id> <database_id> Create table Performances with commit timestamp column
+      insert_data                          <instance_id> <database_id> Insert Data
+      insert_data_with_timestamp_column    <instance_id> <database_id> Inserts data into Performances table containing the commit timestamp column
+      query_data                           <instance_id> <database_id> Query Data
+      read_data                            <instance_id> <database_id> Read Data
+      delete_data                          <instance_id> <database_id> Delete Data
+      read_stale_data                      <instance_id> <database_id> Read Stale Data
+      create_index                         <instance_id> <database_id> Create Index
+      create_storing_index                 <instance_id> <database_id> Create Storing Index
+      add_column                           <instance_id> <database_id> Add Column
+      add_timestamp_column                 <instance_id> <database_id> Alters existing Albums table, adding a commit timestamp column
+      add_numeric_column                   <instance_id> <database_id> Alters existing Venues table, adding a numeric column
+      update_data                          <instance_id> <database_id> Update Data
+      update_data_with_timestamp_column    <instance_id> <database_id> Updates two records in the altered table where the commit timestamp column was added
+      update_data_with_numeric_column      <instance_id> <database_id> Updates three records in the altered table where the numeric column was added
+      query_data_with_new_column           <instance_id> <database_id> Query Data with New Column
+      query_data_with_timestamp_column     <instance_id> <database_id> Queries data from altered table where the commit timestamp column was added
+      write_struct_data                    <instance_id> <database_id> Inserts sample data that can be used for STRUCT queries
+      query_with_struct                    <instance_id> <database_id> Queries data using a STRUCT paramater
+      query_with_array_of_struct           <instance_id> <database_id> Queries data using an array of STRUCT values as parameter
+      query_struct_field                   <instance_id> <database_id> Queries data by accessing field from a STRUCT parameter
+      query_nested_struct_field            <instance_id> <database_id> Queries data by accessing field from nested STRUCT parameters
+      query_data_with_index                <instance_id> <database_id> <start_title> <end_title> Query Data with Index
+      read_write_transaction               <instance_id> <database_id> Read-Write Transaction
+      read_data_with_index                 <instance_id> <database_id> Read Data with Index
+      read_data_with_storing_index         <instance_id> <database_id> Read Data with Storing Index
+      read_only_transaction                <instance_id> <database_id> Read-Only Transaction
+      spanner_batch_client                 <instance_id> <database_id> Use Spanner batch query with a thread pool
+      insert_using_dml                     <instance_id> <database_id> Insert Data using a DML statement.
+      update_using_dml                     <instance_id> <database_id> Update Data using a DML statement.
+      delete_using_dml                     <instance_id> <database_id> Delete Data using a DML statement.
+      update_using_dml_with_timestamp      <instance_id> <database_id> Update the timestamp value of specifc records using a DML statement.
+      write_and_read_using_dml             <instance_id> <database_id> Insert data using a DML statement and then read the inserted data.
+      update_using_dml_with_struct         <instance_id> <database_id> Update data using a DML statement combined with a Spanner struct.
+      write_using_dml                      <instance_id> <database_id> Insert multiple records using a DML statement.
+      query_with_parameter                 <instance_id> <database_id> Query record inserted using DML with a query parameter.
+      query_with_numeric_parameter         <instance_id> <database_id> Query record inserted using DML with a numeric query parameter.
+      write_with_transaction_using_dml     <instance_id> <database_id> Update data using a DML statement within a read-write transaction.
+      update_using_partitioned_dml         <instance_id> <database_id> Update multiple records using a partitioned DML statement.
+      delete_using_partitioned_dml         <instance_id> <database_id> Delete multiple records using a partitioned DML statement.
+      update_using_batch_dml               <instance_id> <database_id> Updates sample data in the database using Batch DML.
+      create_table_with_datatypes          <instance_id> <database_id> Create table Venues with supported datatype columns.
+      write_datatypes_data                 <instance_id> <database_id> Inserts sample data that can be used for datatype queries.
+      query_with_array                     <instance_id> <database_id> Queries data using an ARRAY parameter.
+      query_with_bool                      <instance_id> <database_id> Queries data using a BOOL parameter.
+      query_with_bytes                     <instance_id> <database_id> Queries data using a BYTES parameter.
+      query_with_date                      <instance_id> <database_id> Queries data using a DATE parameter.
+      query_with_float                     <instance_id> <database_id> Queries data using a FLOAT64 parameter.
+      query_with_int                       <instance_id> <database_id> Queries data using a INT64 parameter.
+      query_with_string                    <instance_id> <database_id> Queries data using a STRING parameter.
+      query_with_timestamp                 <instance_id> <database_id> Queries data using a TIMESTAMP parameter.
+      query_with_query_options             <instance_id> <database_id> Queries data with query options.
+      create_client_with_query_options     <instance_id> <database_id> Create a client with query options.
+      write_read_bool_array                <instance_id> <database_id> Writes and read BOOL array.
+      write_read_empty_int64_array         <instance_id> <database_id> Writes empty INT64 array and read.
+      write_read_null_int64_array          <instance_id> <database_id> Writes nil to INT64 array and read.
+      write_read_int64_array               <instance_id> <database_id> Writes INT64 array and read.
+      write_read_empty_float64_array       <instance_id> <database_id> Writes empty FLOAT64 array and read.
+      write_read_null_float64_array        <instance_id> <database_id> Writes nil to FLOAT64 array and read.
+      write_read_float64_array             <instance_id> <database_id> Writes FLOAT64 array and read.
+      create_backup                        <instance_id> <database_id> <backup_id> <version_time> Create a backup.
+      create_backup_with_encryption_key    <instance_id> <database_id> <backup_id> <kms_key_name> Create a backup using encryption key.
+      restore_backup                       <instance_id> <database_id> <backup_id> Restore a database.
+      restore_database_with_encryption_key <instance_id> <database_id> <backup_id> <kms_key_name> Restore a database using encryption key.
+      create_backup_cancel                 <instance_id> <database_id> <backup_id> Cancel a backup.
+      list_backup_operations               <instance_id> List backup operations.
+      list_database_operations             <instance_id> List database operations.
+      list_backups                         <instance_id> <backup_id> <database_id> List and filter backups.
+      delete_backup                        <instance_id> <backup_id> Delete a backup.
+      update_backup                        <instance_id> <backup_id> Update the backup.
+      set_custom_timeout_and_retry         <instance_id> <database_id> Set custom timeout and retry settings.
+      commit_stats                         <instance_id> <database_id> Get commit stats.
 
     Environment variables:
       GOOGLE_CLOUD_PROJECT must be set to your Google Cloud project ID
@@ -1990,7 +2194,8 @@ def run_sample arguments
     "list_backup_operations", "list_database_operations", "list_backups",
     "delete_backup", "update_backup_expiration_time",
     "set_custom_timeout_and_retry", "query_with_numeric_parameter",
-    "update_data_with_numeric_column"
+    "update_data_with_numeric_column", "commit_stats", "create_database_with_encryption_key",
+    "create_backup_with_encryption_key", "restore_database_with_encryption_key"
   ]
   if command.eql?("query_data_with_index") && instance_id && database_id && arguments.size >= 2
     query_data_with_index project_id:  project_id,
